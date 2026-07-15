@@ -1,0 +1,22 @@
+# Netlify configuration for Groundwork
+
+[build]
+  # Static site lives in /public, serverless functions in /netlify/functions
+  publish = "public"
+  functions = "netlify/functions"
+
+# Pretty API path: /api/personalize  ->  the personalize function
+[[redirects]]
+  from = "/api/personalize"
+  to = "/.netlify/functions/personalize"
+  status = 200
+
+# SPA-style fallback (single page)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[functions]
+  # 'esbuild' bundles node_modules (the @supabase/supabase-js dependency)
+  node_bundler = "esbuild"
