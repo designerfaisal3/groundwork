@@ -69,6 +69,7 @@ exports.handler = async (event) => {
   if (profile.usage_count >= profile.usage_limit) {
     return resp(402, { error: "Out of personalizations.", remaining: 0 });
   }
+  const remainingBefore = profile.usage_limit - profile.usage_count;
 
   // ---- 3. fetch + clean the website ----
   let pageText, pageTitle, pageMeta;
@@ -78,10 +79,10 @@ exports.handler = async (event) => {
     pageTitle = fetched.title;
     pageMeta = fetched.description;
   } catch (e) {
-    return resp(422, { error: "Couldn't read that site (" + e.message + "). Try a different page.", remaining: profile.usage_limit - profile.usage_count });
+    return resp(422, { error: "Couldn't read that site (" + e.message + "). Try a different page.", remaining: remainingBefore });
   }
   if (!pageText || pageText.length < 120) {
-    return resp(422, { error: "That page had almost no readable text. Try the homepage or an about page.", remaining: profile.usage_limit - profile.usage_count });
+    return resp(422, { error: "That page had almost no readable text. Try the homepage or an about page.", remaining: remainingBefore });
   }
 
   // ---- 4. call Claude ----
@@ -89,7 +90,7 @@ exports.handler = async (event) => {
   try {
     result = await callClaude({ url, offer, tone, pageTitle, pageMeta, pageText });
   } catch (e) {
-    return resp(502, { error: "The writer hit a snag: " + e.message, remaining: profile.usage_limit - profile.usage_count });
+    return resp(502, { error: "The writer hit a snag: " + e.message, remaining: remainingBefore });
   }
 
   // ---- 5. increment usage + save ----
@@ -120,7 +121,6 @@ async function fetchSite(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        // present as a normal browser so more sites respond
         "user-agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         accept: "text/html,application/xhtml+xml",
@@ -135,7 +135,7 @@ async function fetchSite(url) {
   if (!ctype.includes("html")) throw new Error("not an HTML page");
 
   let html = await res.text();
-  if (html.length > 400000) html = html.slice(0, 400000); // guard huge pages
+  if (html.length > 400000) html = html.slice(0, 400000);
 
   const title = matchTag(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
   const description = matchMeta(html, "description") || matchMeta(html, "og:description");
@@ -144,7 +144,7 @@ async function fetchSite(url) {
   return {
     title: cleanWs(title),
     description: cleanWs(description),
-    text: text.slice(0, 7000), // enough context, keeps token cost sane
+    text: text.slice(0, 7000),
   };
 }
 
@@ -176,11 +176,50 @@ function matchMeta(html, name) {
 function cleanWs(s) { return (s || "").replace(/\s+/g, " ").trim(); }
 
 /* ------------------------------------------------------------------
-   Call Claude via the Messages API (plain fetch, no SDK).
-   Note: Sonnet 5 rejects custom temperature / manual thinking — omit them.
+   Low-level Anthropic Messages API call. Returns the joined text.
+   Sonnet 5 rejects custom temperature / manual thinking — omit them.
+   max_tokens is generous because adaptive thinking shares the budget;
+   too small a value truncates the JSON mid-way.
+   ------------------------------------------------------------------ */
+async function anthropicText(system, userContent, maxTokens) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userContent }],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error("Claude API " + res.status + (errText ? " — " + errText.slice(0, 160) : ""));
+  }
+
+  const data = await res.json();
+
+  if (data.stop_reason === "max_tokens") {
+    throw new Error("response was too long — try a simpler page");
+  }
+
+  return (data.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+}
+
+/* ------------------------------------------------------------------
+   Ask Claude for the brief. Parse it; if the JSON is malformed,
+   make one quick repair call and parse again.
    ------------------------------------------------------------------ */
 async function callClaude({ url, offer, tone, pageTitle, pageMeta, pageText }) {
-  const system = SYSTEM_PROMPT;
   const userContent =
 `SENDER'S OFFER (what they sell):
 ${offer}
@@ -198,39 +237,26 @@ ${pageText}
 
 Produce the JSON brief now.`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1600,
-      system,
-      messages: [{ role: "user", content: userContent }],
-    }),
-  });
+  const raw = await anthropicText(SYSTEM_PROMPT, userContent, 4000);
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error("Claude API " + res.status + (errText ? " — " + errText.slice(0, 160) : ""));
+  try {
+    return parseJsonLoose(raw);
+  } catch (firstErr) {
+    const repairPrompt =
+`The text below was supposed to be a single valid JSON object but it is malformed. ` +
+`Return ONLY the corrected, valid JSON object — no explanation, no code fences. ` +
+`Keep all the content; just fix the JSON so it parses.\n\n` + raw;
+    const repaired = await anthropicText(
+      "You fix malformed JSON. Output only valid JSON, nothing else.",
+      repairPrompt,
+      4000
+    );
+    return parseJsonLoose(repaired);
   }
-
-  const data = await res.json();
-  const text = (data.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
-
-  return parseJsonLoose(text);
 }
 
-// The model is told to return only JSON; strip fences just in case.
 function parseJsonLoose(text) {
-  let t = text.trim();
+  let t = (text || "").trim();
   if (t.startsWith("```")) t = t.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   const start = t.indexOf("{");
   const end = t.lastIndexOf("}");
@@ -245,13 +271,19 @@ You are given: the sender's offer, a requested tone, and the extracted text of O
 HARD RULES:
 - Ground every claim in the page text. NEVER invent facts, numbers, clients, funding, awards, locations, or people. If it isn't in the page, don't say it.
 - If the page is thin or generic, say so honestly in "notes" and set confidence to "low". Don't paper over a weak page with vague flattery.
-- No clichés: never write "I hope this email finds you well", "I came across your website", "I love what you're doing", "big fan", or empty compliments.
+- No cliches: never write "I hope this email finds you well", "I came across your website", "I love what you are doing", "big fan", or empty compliments.
 - Each opening line must reference a SPECIFIC, verifiable detail from the page, then bridge naturally toward the sender's offer. The bridge should be light — a reason to talk, not a pitch.
 - Keep opening lines to 1-2 sentences, conversational, and in the requested tone. Written as the first line(s) of an email, not a whole email.
 - Openers must be genuinely different from each other (different angle + different signal where possible), not three rewrites of one idea.
 - Subject lines: short (under ~6 words), specific, no clickbait, lowercase-friendly.
 
-Return ONLY a valid JSON object, no prose, no markdown fences, in exactly this shape:
+OUTPUT FORMAT — READ CAREFULLY:
+- Output ONE valid JSON object and NOTHING else. No prose before or after. No markdown code fences.
+- Inside any string value, do NOT use double-quote characters. If you must quote a word or phrase, use single quotes instead. This keeps the JSON valid.
+- Keep every string value on a single line — no line breaks inside a string.
+- No trailing commas.
+
+Use exactly this shape:
 {
   "prospect": {
     "name": "the company or person name if identifiable from the page, else a short descriptor",
@@ -270,7 +302,6 @@ Return ONLY a valid JSON object, no prose, no markdown fences, in exactly this s
 
 Provide 3 to 5 signals and exactly 3 openers. confidence reflects how much real, specific signal the page gave you.`;
 
-/* ---- small response helper ---- */
 function resp(status, obj) {
   return { statusCode: status, headers: JSON_HEADERS, body: JSON.stringify(obj) };
 }
