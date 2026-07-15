@@ -514,3 +514,76 @@ input, textarea, select, button { font-family: inherit; font-size: 15px; color: 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ============================================================
+   PERSONAL EDITION ADDITIONS
+   ============================================================ */
+
+/* account pill (replaces usage pill) */
+.acct-pill {
+  font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reset-row { margin-top: 14px; text-align: center; }
+
+/* recommended service cards */
+.recs { display: flex; flex-direction: column; gap: 10px; }
+.rec-card {
+  text-align: left; width: 100%;
+  background: #fcfdfb; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 15px 16px; cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.06s ease;
+}
+.rec-card:hover { border-color: var(--pine); box-shadow: var(--shadow-sm); }
+.rec-card:active { transform: translateY(1px); }
+.rec-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.rec-name { font-family: var(--font-display); font-size: 20px; color: var(--ink); }
+.fit-badge {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 6px; white-space: nowrap;
+}
+.fit-badge.high { background: var(--pine-tint); color: var(--pine-dark); }
+.fit-badge.med { background: var(--gold-tint); color: #8a5c12; }
+.rec-why { font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+.rec-cta { margin-top: 9px; font-family: var(--font-mono); font-size: 12px; color: var(--pine); letter-spacing: 0.02em; }
+
+/* email view */
+.email-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 24px; border-bottom: 1px solid var(--line);
+}
+.linkbtn.back { color: var(--pine); font-weight: 500; padding: 0; }
+.linkbtn.back:hover { text-decoration: underline; }
+.email-service {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--gold); background: var(--gold-tint); padding: 5px 10px; border-radius: 6px; white-space: nowrap;
+}
+.subject-main {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: #fcfdfb; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 13px 15px; font-size: 16px; font-weight: 500;
+}
+.alt-subjects { display: flex; flex-direction: column; gap: 7px; margin-top: 9px; }
+.alt-subject {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 13px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 13.5px; color: var(--muted);
+}
+
+.email-body {
+  background: #fcfdfb; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 20px 22px;
+}
+.email-p { font-size: 15px; line-height: 1.62; color: var(--ink); margin-bottom: 14px; }
+.email-signoff { margin-top: 20px; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+.sign-line { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.sign-line:first-child { color: var(--ink); margin-bottom: 4px; }
+
+.email-actions { display: flex; gap: 10px; padding: 18px 24px; flex-wrap: wrap; }
+.email-actions .btn { flex: 1; min-width: 150px; }
+
+@media (max-width: 520px) {
+  .acct-pill { display: none; }
+  .email-actions .btn { flex: 1 1 100%; }
+}
